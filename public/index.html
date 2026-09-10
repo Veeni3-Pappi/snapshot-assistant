@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Salon Snapshot Assistant</title>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(180deg, #1a1f3a 0%, #2d3561 100%);
+      min-height: 100vh;
+      padding: 0;
+      color: #fff;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      background: linear-gradient(180deg, #2a3154 0%, #f5f7fa 30%);
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(180deg, #1a1f3a 0%, #2a3154 100%);
+      padding: 20px;
+      text-align: center;
+      position: relative;
+    }
+
+    .branch-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 30px;
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+    }
+
+    .branch-dot {
+      width: 8px;
+      height: 8px;
+      background: #4ade80;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .settings-icon {
+      width: 24px;
+      height: 24px;
+      opacity: 0.6;
+      cursor: pointer;
+    }
+
+    .camera-icon-wrapper {
+      width: 60px;
+      height: 60px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 12px;
+      margin: 0 auto 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: rgba(255,255,255,0.7);
+      font-weight: 400;
+    }
+
+    /* Progress Section */
+    .progress-section {
+      background: #fff;
+      padding: 20px;
+      border-radius: 24px 24px 0 0;
+      margin-top: -20px;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+    }
+
+    .progress-header {
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .progress-count {
+      font-size: 13px;
+      color: #64748b;
+      margin-left: auto;
+    }
+
+    .progress-indicators {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .progress-item {
+      flex: 1;
+      text-align: center;
+      position: relative;
+    }
+
+    .progress-circle {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #f1f5f9;
+      margin: 0 auto 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1e293b;
+      position: relative;
+    }
+
+    .progress-circle.active {
+      background: #1e293b;
+      color: #fff;
+    }
+
+    .progress-circle.complete {
+      background: #4ade80;
+      color: #fff;
+    }
+
+    .progress-circle.pending {
+      background: #f1f5f9;
+      color: #cbd5e1;
+    }
+
+    .progress-label {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 500;
+    }
+
+    .progress-sublabel {
+      font-size: 9px;
+      color: #94a3b8;
+    }
+
+    .progress-bar {
+      height: 3px;
+      background: #e2e8f0;
+      border-radius: 3px;
+      margin-top: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: #1e293b;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+
+    /* Content */
+    .content {
+      background: #f5f7fa;
+      padding: 24px 20px;
+      min-height: calc(100vh - 400px);
+    }
+
+    .upload-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      position: relative;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .card-number {
+      width: 28px;
+      height: 28px;
+      background: #1e293b;
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .card-title-group {
+      flex: 1;
+      margin-left: 12px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 4px;
+    }
+
+    .card-description {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      color: #dc2626;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge.optional {
+      color: #94a3b8;
+    }
+
+    .upload-zone {
+      border: 2px dashed #e2e8f0;
+      border-radius: 12px;
+      padding: 32px 20px;
+      text-align: center;
+      margin: 16px 0;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: #fafbfc;
+      position: relative;
+    }
+
+    .upload-zone:hover {
+      border-color: #cbd5e1;
+      background: #f8fafc;
+    }
+
+    .upload-zone.drag-over {
+      border-color: #3b82f6;
+      background: #eff6ff;
+      border-style: solid;
+    }
+
+    .upload-zone.has-files {
+      border-color: #4ade80;
+      background: #f0fdf4;
+    }
+
+    .upload-icon-wrapper {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.6;
+    }
+
+    .upload-text {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1e293b;
+      margin-bottom: 4px;
+    }
+
+    .upload-subtext {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .btn-upload {
+      width: 100%;
+      padding: 14px 20px;
+      background: #1e293b;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-upload:hover {
+      background: #0f172a;
+      transform: translateY(-1px);
+    }
+
+    .btn-upload:active {
+      transform: translateY(0);
+    }
+
+    .btn-analyze {
+      width: calc(100% - 40px);
+      margin: 24px 20px;
+      padding: 18px 24px;
+      background: #1e293b;
+      color: #fff;
+      border: none;
+      border-radius: 16px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 4px 12px rgba(30, 41, 59, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .btn-analyze:hover:not(:disabled) {
+      background: #0f172a;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(30, 41, 59, 0.4);
+    }
+
+    .btn-analyze:disabled {
+      background: #cbd5e1;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-analyze-text {
+      font-size: 13px;
+      opacity: 0.8;
+      display: block;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .message {
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin: 12px 20px;
+      font-size: 13px;
+      font-weight: 500;
+      animation: slideIn 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .message.success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .message.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .result-container {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 20px 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+
+    .result-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1e293b;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .client-card {
+      background: #fafbfc;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 12px 0;
+      border: 1px solid #e2e8f0;
+    }
+
+    .client-header {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e293b;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #1e293b;
+    }
+
+    .blue-alert {
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 12px;
+      border-radius: 8px;
+      border-left: 3px solid #3b82f6;
+      font-size: 13px;
+      font-weight: 500;
+      margin: 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    /* Modern Loading Animation */
+    .spinner-container {
+      display: inline-block;
+      position: relative;
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+    }
+
+    .spinner-ring {
+      box-sizing: border-box;
+      display: block;
+      position: absolute;
+      width: 51px;
+      height: 51px;
+      margin: 6px;
+      border: 6px solid;
+      border-radius: 50%;
+      animation: spinner-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+      border-color: #1e293b transparent transparent transparent;
+    }
+
+    .spinner-ring:nth-child(1) {
+      animation-delay: -0.45s;
+    }
+
+    .spinner-ring:nth-child(2) {
+      animation-delay: -0.3s;
+    }
+
+    .spinner-ring:nth-child(3) {
+      animation-delay: -0.15s;
+    }
+
+    @keyframes spinner-ring {
+      0% {
+        transform: rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* Pulse animation for icons */
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    .loading-icon {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .file-count {
+      font-size: 12px;
+      color: #4ade80;
+      font-weight: 600;
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    /* Icon sizing */
+    .icon-sm {
+      width: 16px;
+      height: 16px;
+    }
+
+    .icon-md {
+      width: 24px;
+      height: 24px;
+    }
+
+    .icon-lg {
+      width: 32px;
+      height: 32px;
+    }
+
+    .icon-xl {
+      width: 48px;
+      height: 48px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="branch-info">
+        <div style="display: flex; align-items: center;">
+          <span class="branch-dot"></span>
+          <span id="branchName">Downtown Branch</span> - Today, <span id="currentDate"></span>
+        </div>
+        <div>
+          <i data-lucide="settings" class="icon-md" style="color: rgba(255,255,255,0.6); cursor: pointer;"></i>
+        </div>
+      </div>
+      
+      <div class="camera-icon-wrapper">
+        <i data-lucide="camera" class="icon-lg" style="color: rgba(255,255,255,0.9);"></i>
+      </div>
+      <h1>Salon Snapshot</h1>
+      <p>Daily Operations Report Assistant</p>
+    </div>
+
+    <!-- Progress Section -->
+    <div class="progress-section">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div class="progress-header">Daily Intake Progress</div>
+        <div class="progress-count"><span id="uploadProgress">0</span> of 3 Uploaded</div>
+      </div>
+      
+      <div class="progress-indicators">
+        <div class="progress-item">
+          <div class="progress-circle active" id="cctvCircle">
+            <span id="cctvCount">0</span>
+          </div>
+          <div class="progress-label">CCTV</div>
+          <div class="progress-sublabel">Uploads</div>
+        </div>
+        
+        <div class="progress-item">
+          <div class="progress-circle pending" id="bookCircle">
+            <i data-lucide="book-open" class="icon-md"></i>
+          </div>
+          <div class="progress-label">Daily Book</div>
+          <div class="progress-sublabel">Pending</div>
+        </div>
+        
+        <div class="progress-item">
+          <div class="progress-circle pending" id="paymentCircle">
+            <i data-lucide="credit-card" class="icon-md"></i>
+          </div>
+          <div class="progress-label">Payments</div>
+          <div class="progress-sublabel">Pending</div>
+        </div>
+      </div>
+      
+      <div class="progress-bar">
+        <div class="progress-bar-fill" id="progressBarFill"></div>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div id="messages"></div>
+
+    <!-- Content -->
+    <div class="content">
+      <!-- Card 1: CCTV Snapshots -->
+      <div class="upload-card">
+        <div class="card-header">
+          <div class="card-number">1</div>
+          <div class="card-title-group">
+            <div class="card-title">Upload CCTV Snapshots</div>
+            <div class="card-description">Drag & drop or tap to select multiple photos across salon styling stations & peak hours</div>
+          </div>
+          <div class="badge">REQUIRED</div>
+        </div>
+        
+        <div class="upload-zone" id="cctvZone" 
+             onclick="document.getElementById('cctvInput').click()"
+             ondrop="handleDrop(event, 'cctv')"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)">
+          <div class="upload-icon-wrapper">
+            <i data-lucide="video" class="icon-xl" style="color: #64748b;"></i>
+          </div>
+          <div class="upload-text">Drag & drop or tap to select</div>
+          <div class="upload-subtext">JPG, PNG, WebP • Max 10MB per file</div>
+          <div class="file-count hidden" id="cctvFileCount"></div>
+        </div>
+        
+        <input type="file" id="cctvInput" accept="image/*" multiple onchange="handleFileSelect('cctv')">
+        <button class="btn-upload" onclick="uploadCCTV()">
+          <i data-lucide="upload" class="icon-sm"></i>
+          <span>UPLOAD SNAPSHOTS</span>
+        </button>
+      </div>
+
+      <!-- Card 2: Daily Book -->
+      <div class="upload-card">
+        <div class="card-header">
+          <div class="card-number">2</div>
+          <div class="card-title-group">
+            <div class="card-title">Upload Daily Book</div>
+            <div class="card-description">Clear photo of handwritten daily register or stylist log sheet</div>
+          </div>
+          <div class="badge optional">Optional</div>
+        </div>
+        
+        <div class="upload-zone" id="bookZone" 
+             onclick="document.getElementById('dailyBookInput').click()"
+             ondrop="handleDrop(event, 'book')"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)">
+          <div class="upload-icon-wrapper">
+            <i data-lucide="book-open" class="icon-xl" style="color: #64748b;"></i>
+          </div>
+          <div class="upload-text">Drag & drop or tap to select</div>
+          <div class="upload-subtext">Photo scan or PDF export</div>
+          <div class="file-count hidden" id="bookFileCount"></div>
+        </div>
+        
+        <input type="file" id="dailyBookInput" accept="image/*" onchange="handleFileSelect('book')">
+        <button class="btn-upload" onclick="uploadDailyBook()">
+          <i data-lucide="upload" class="icon-sm"></i>
+          <span>UPLOAD DAILY BOOK</span>
+        </button>
+      </div>
+
+      <!-- Card 3: Payment Records -->
+      <div class="upload-card">
+        <div class="card-header">
+          <div class="card-number">3</div>
+          <div class="card-title-group">
+            <div class="card-title">Upload Payment / Sales Records</div>
+            <div class="card-description">Credit card slips, cash summaries, or POS reports for verification</div>
+          </div>
+          <div class="badge optional">Optional</div>
+        </div>
+        
+        <div class="upload-zone" id="paymentZone" 
+             onclick="document.getElementById('paymentInput').click()"
+             ondrop="handleDrop(event, 'payment')"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)">
+          <div class="upload-icon-wrapper">
+            <i data-lucide="receipt" class="icon-xl" style="color: #64748b;"></i>
+          </div>
+          <div class="upload-text">Drag & drop or tap to select</div>
+          <div class="upload-subtext">Settlement slips or POS reports</div>
+          <div class="file-count hidden" id="paymentFileCount"></div>
+        </div>
+        
+        <input type="file" id="paymentInput" accept="image/*" onchange="handleFileSelect('payment')">
+        <button class="btn-upload" onclick="uploadPaymentRecords()">
+          <i data-lucide="upload" class="icon-sm"></i>
+          <span>UPLOAD PAYMENT RECORDS</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Analyze Button -->
+    <button class="btn-analyze" id="analyzeBtn" onclick="analyze()" disabled>
+      <div style="text-align: center; width: 100%;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px;">
+          <i data-lucide="sparkles" class="icon-md"></i>
+          <span>Generate Daily Audit Report</span>
+        </div>
+        <span class="btn-analyze-text">AI will automatically compile footage with sales data</span>
+      </div>
+    </button>
+
+    <!-- Analysis Results -->
+    <div id="analysisResults" class="hidden"></div>
+
+    <!-- Email Button -->
+    <button class="btn-analyze hidden" id="emailBtn" onclick="generateAndEmailReport()" style="background: #3b82f6;">
+      <div style="text-align: center; width: 100%;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px;">
+          <i data-lucide="mail" class="icon-md"></i>
+          <span>Send Report via Email</span>
+        </div>
+      </div>
+    </button>
+  </div>
+
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Set current date
+    const options = { month: 'short', day: 'numeric' };
+    document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US', options);
+
+    let analysisData = null;
+    updateStatus();
+
+    // Drag and Drop Handlers
+    function handleDragOver(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.classList.add('drag-over');
+    }
+
+    function handleDragLeave(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.classList.remove('drag-over');
+    }
+
+    function handleDrop(event, type) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.classList.remove('drag-over');
+
+      const files = event.dataTransfer.files;
+      if (files.length === 0) return;
+
+      // Set files to the appropriate input
+      const inputId = type === 'cctv' ? 'cctvInput' : type === 'book' ? 'dailyBookInput' : 'paymentInput';
+      const input = document.getElementById(inputId);
+      
+      // Create a new FileList-like object
+      const dataTransfer = new DataTransfer();
+      for (let file of files) {
+        if (file.type.startsWith('image/')) {
+          dataTransfer.items.add(file);
+        }
+      }
+      input.files = dataTransfer.files;
+      
+      handleFileSelect(type);
+    }
+
+    function handleFileSelect(type) {
+      const inputId = type === 'cctv' ? 'cctvInput' : type === 'book' ? 'dailyBookInput' : 'paymentInput';
+      const zoneId = type === 'cctv' ? 'cctvZone' : type === 'book' ? 'bookZone' : 'paymentZone';
+      const countId = type === 'cctv' ? 'cctvFileCount' : type === 'book' ? 'bookFileCount' : 'paymentFileCount';
+      
+      const input = document.getElementById(inputId);
+      const zone = document.getElementById(zoneId);
+      const countEl = document.getElementById(countId);
+      
+      if (input.files.length > 0) {
+        zone.classList.add('has-files');
+        countEl.innerHTML = `<i data-lucide="check-circle" class="icon-sm"></i><span>${input.files.length} file(s) selected</span>`;
+        countEl.classList.remove('hidden');
+        lucide.createIcons();
+      }
+    }
+
+    async function updateStatus() {
+      try {
+        const response = await fetch('/api/session-status');
+        const data = await response.json();
+        
+        // Update CCTV count
+        document.getElementById('cctvCount').textContent = data.cctvCount;
+        
+        // Update circles
+        const bookCircle = document.getElementById('bookCircle');
+        const paymentCircle = document.getElementById('paymentCircle');
+        
+        if (data.hasDailyBook) {
+          bookCircle.classList.remove('pending');
+          bookCircle.classList.add('complete');
+          bookCircle.innerHTML = '<i data-lucide="check" class="icon-md"></i>';
+          lucide.createIcons();
+        }
+        
+        if (data.hasPaymentRecords) {
+          paymentCircle.classList.remove('pending');
+          paymentCircle.classList.add('complete');
+          paymentCircle.innerHTML = '<i data-lucide="check" class="icon-md"></i>';
+          lucide.createIcons();
+        }
+        
+        // Update progress bar
+        let progress = 0;
+        if (data.cctvCount > 0) progress += 33;
+        if (data.hasDailyBook) progress += 33;
+        if (data.hasPaymentRecords) progress += 34;
+        
+        document.getElementById('progressBarFill').style.width = progress + '%';
+        
+        const uploadCount = (data.cctvCount > 0 ? 1 : 0) + (data.hasDailyBook ? 1 : 0) + (data.hasPaymentRecords ? 1 : 0);
+        document.getElementById('uploadProgress').textContent = uploadCount;
+        
+        // Enable analyze button
+        document.getElementById('analyzeBtn').disabled = data.cctvCount === 0;
+      } catch (error) {
+        console.error('Error updating status:', error);
+      }
+    }
+
+    function showMessage(message, type = 'success') {
+      const messagesDiv = document.getElementById('messages');
+      const messageEl = document.createElement('div');
+      messageEl.className = `message ${type}`;
+      
+      const icon = type === 'success' ? 'check-circle' : 'alert-circle';
+      messageEl.innerHTML = `<i data-lucide="${icon}" class="icon-sm"></i><span>${message}</span>`;
+      messagesDiv.appendChild(messageEl);
+      lucide.createIcons();
+      
+      setTimeout(() => messageEl.remove(), 5000);
+    }
+
+    function showLoading(message = 'Processing...') {
+      const resultsDiv = document.getElementById('analysisResults');
+      resultsDiv.innerHTML = `
+        <div class="loading">
+          <div class="spinner-container">
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+          </div>
+          <p style="color: #64748b; font-weight: 500;">${message}</p>
+        </div>
+      `;
+      resultsDiv.classList.remove('hidden');
+    }
+
+    async function uploadCCTV() {
+      const fileInput = document.getElementById('cctvInput');
+      const files = fileInput.files;
+      
+      if (files.length === 0) {
+        showMessage('Please select at least one file', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      for (let file of files) {
+        formData.append('snapshots', file);
+      }
+
+      try {
+        const response = await fetch('/api/upload-cctv', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          showMessage(data.message, 'success');
+          fileInput.value = '';
+          document.getElementById('cctvZone').classList.remove('has-files');
+          document.getElementById('cctvFileCount').classList.add('hidden');
+          updateStatus();
+        } else {
+          showMessage(data.error || 'Upload failed', 'error');
+        }
+      } catch (error) {
+        showMessage('Upload failed: ' + error.message, 'error');
+      }
+    }
+
+    async function uploadDailyBook() {
+      const fileInput = document.getElementById('dailyBookInput');
+      const file = fileInput.files[0];
+      
+      if (!file) {
+        showMessage('Please select a file', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('dailyBook', file);
+
+      try {
+        const response = await fetch('/api/upload-daily-book', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          showMessage(data.message, 'success');
+          fileInput.value = '';
+          document.getElementById('bookZone').classList.remove('has-files');
+          document.getElementById('bookFileCount').classList.add('hidden');
+          updateStatus();
+        } else {
+          showMessage(data.error || 'Upload failed', 'error');
+        }
+      } catch (error) {
+        showMessage('Upload failed: ' + error.message, 'error');
+      }
+    }
+
+    async function uploadPaymentRecords() {
+      const fileInput = document.getElementById('paymentInput');
+      const file = fileInput.files[0];
+      
+      if (!file) {
+        showMessage('Please select a file', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('paymentRecords', file);
+
+      try {
+        const response = await fetch('/api/upload-payment-records', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          showMessage(data.message, 'success');
+          fileInput.value = '';
+          document.getElementById('paymentZone').classList.remove('has-files');
+          document.getElementById('paymentFileCount').classList.add('hidden');
+          updateStatus();
+        } else {
+          showMessage(data.error || 'Upload failed', 'error');
+        }
+      } catch (error) {
+        showMessage('Upload failed: ' + error.message, 'error');
+      }
+    }
+
+    async function analyze() {
+      showLoading('Analyzing snapshots with AI... This may take 30-60 seconds');
+      
+      try {
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          analysisData = data.analysis;
+          displayAnalysis(data.analysis);
+          document.getElementById('emailBtn').classList.remove('hidden');
+          showMessage('Analysis completed successfully!', 'success');
+        } else {
+          document.getElementById('analysisResults').classList.add('hidden');
+          showMessage(data.error || 'Analysis failed', 'error');
+        }
+      } catch (error) {
+        document.getElementById('analysisResults').classList.add('hidden');
+        showMessage('Analysis failed: ' + error.message, 'error');
+      }
+    }
+
+    function displayAnalysis(analysis) {
+      const resultsDiv = document.getElementById('analysisResults');
+      let html = '<div class="result-container"><div class="result-title"><i data-lucide="bar-chart-3" class="icon-md"></i>Analysis Results</div>';
+      
+      const lines = analysis.split('\n');
+      let inClientCard = false;
+      
+      for (let line of lines) {
+        line = line.trim();
+        if (!line) continue;
+        
+        if (line.match(/^CLIENT \d+/i)) {
+          if (inClientCard) html += '</div>';
+          html += `<div class="client-card"><div class="client-header">${escapeHtml(line)}</div>`;
+          inClientCard = true;
+        } else if (line.includes('[BLUE ALERT]')) {
+          const cleanLine = line.replace('[BLUE ALERT]', '').trim();
+          html += `<div class="blue-alert"><i data-lucide="alert-triangle" class="icon-sm"></i><span>${escapeHtml(cleanLine)}</span></div>`;
+        } else if (line.match(/^(EXCEPTIONS|ITEMS REQUIRING ATTENTION|SUMMARY)/i)) {
+          if (inClientCard) {
+            html += '</div>';
+            inClientCard = false;
+          }
+          html += `<div class="client-header" style="margin-top: 20px;">${escapeHtml(line)}</div>`;
+        } else {
+          html += `<p style="margin: 6px 0; font-size: 13px; color: #475569;">${escapeHtml(line)}</p>`;
+        }
+      }
+      
+      if (inClientCard) html += '</div>';
+      html += '</div>';
+      
+      resultsDiv.innerHTML = html;
+      resultsDiv.classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function generateAndEmailReport() {
+      if (!analysisData) {
+        showMessage('No analysis data available', 'error');
+        return;
+      }
+
+      showLoading('Generating and sending report via email...');
+
+      try {
+        const response = await fetch('/api/generate-report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ analysis: analysisData })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          showMessage(data.message, 'success');
+          displayAnalysis(analysisData);
+        } else {
+          displayAnalysis(analysisData);
+          showMessage('Email failed: ' + data.error, 'error');
+        }
+      } catch (error) {
+        displayAnalysis(analysisData);
+        showMessage('Failed to send email: ' + error.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>

@@ -16,6 +16,7 @@
     "express": "^4.18.2",
     "multer": "^2.0.0",
     "nodemailer": "^10.0.1",
+    "pdfkit": "^0.20.2",
     "resend": "^6.26.0"
   },
   "devDependencies": {

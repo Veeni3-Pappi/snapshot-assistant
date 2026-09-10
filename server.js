@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const PDFDocument = require('pdfkit');
 
 // Check which AI provider to use
 const AI_PROVIDER = process.env.AI_PROVIDER || 'claude';
@@ -252,7 +253,7 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// Generate and email report
+// Generate PDF report and email it when configured
 app.post('/api/generate-report', async (req, res) => {
   try {
     const { analysis } = req.body;
@@ -264,6 +265,8 @@ app.post('/api/generate-report', async (req, res) => {
       });
     }
 
+    const report = parseAnalysisForReport(analysis);
+    const pdfBuffer = await createReportPDF(report);
     const notificationMethod = process.env.NOTIFICATION_METHOD || 'email';
     const results = {
       email: null,
@@ -273,7 +276,6 @@ app.post('/api/generate-report', async (req, res) => {
     // Send Email
     if (notificationMethod === 'email' || notificationMethod === 'both') {
       try {
-        const htmlReport = formatReportAsHTML(analysis);
         const fromEmail = process.env.EMAIL_USER || 'onboarding@resend.dev';
         const recipientEmail = process.env.REPORT_RECIPIENT_EMAIL;
         
@@ -285,7 +287,11 @@ app.post('/api/generate-report', async (req, res) => {
           from: fromEmail,
           to: [recipientEmail],
           subject: `Salon Daily Operations Report - ${new Date().toLocaleDateString()}`,
-          html: htmlReport
+          html: '<p>Your Salon Daily Operations Report is attached as a PDF.</p>',
+          attachments: [{
+            filename: `salon-daily-operations-${report.dateSlug}.pdf`,
+            content: pdfBuffer.toString('base64')
+          }]
         });
 
         const options = {
@@ -405,15 +411,14 @@ app.post('/api/generate-report', async (req, res) => {
       if (results.sms) message += `SMS: ${results.sms.error}`;
     }
 
-    res.json({ 
-      success: overallSuccess,
-      message: message,
-      details: results,
-      report: formatReportAsHTML(analysis)
-    });
+    res.status(200)
+      .set('Content-Type', 'application/pdf')
+      .set('Content-Disposition', `attachment; filename="salon-daily-operations-${report.dateSlug}.pdf"`)
+      .set('X-Report-Delivery', overallSuccess ? message : 'PDF generated; delivery notification failed')
+      .send(pdfBuffer);
   } catch (error) {
     console.error('Error in report generation:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false, 
       error: `Failed to generate report: ${error.message}` 
     });
@@ -584,9 +589,168 @@ EXCEPTIONS / ITEMS REQUIRING ATTENTION
 SUMMARY
 [2-3 sentence summary of the day's operations]
 
+Also include these exact headings when the evidence is available:
+SALES SUMMARY
+Total Sales: [amount or Not provided]
+PAYMENT METHOD
+Cash: [amount or Nil]
+Mpesa: [amount or Nil]
+PDQ: [amount or Nil]
+Credit: [amount or Nil]
+SERVICE REVENUE
+- [staff]: [service] – [amount or Not provided]
+PRODUCT SOLD
+- [product or Nil]
+CLIENT SUMMARY
+Repeat Clients: [count or Nil]
+New Client: [count or Nil]
+
 NOW ANALYZE THE IMAGES:`;
 
   return prompt;
+}
+
+function cleanReportValue(value) {
+  return value.replace(/^[-•*]\s*/, '').replace(/\s+/g, ' ').trim();
+}
+
+function findReportValue(lines, label) {
+  const line = lines.find(item => new RegExp(`^[-•*]?\\s*${label}\\s*[-:]`, 'i').test(item));
+  if (!line) return '';
+  return cleanReportValue(line.replace(new RegExp(`^[-•*]?\\s*${label}\\s*[-:]\\s*`, 'i'), ''));
+}
+
+function parseAnalysisForReport(analysis) {
+  const lines = analysis.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const clientIndexes = [];
+  lines.forEach((line, index) => {
+    if (/^CLIENT\s+\d+/i.test(line)) clientIndexes.push(index);
+  });
+
+  const clients = clientIndexes.map((start, index) => {
+    const block = lines.slice(start, clientIndexes[index + 1] || lines.length)
+      .filter(line => !/^(EXCEPTIONS|ITEMS REQUIRING ATTENTION|SUMMARY)\b/i.test(line));
+    const clientNumber = Number(block[0].match(/\d+/)[0]);
+    return {
+      number: clientNumber,
+      service: findReportValue(block, 'Services?') || 'Unable to confirm',
+      revenue: findReportValue(block, 'Revenue') || 'Not provided',
+      staff: findReportValue(block, 'Staff') || 'Unable to confirm',
+      arrival: findReportValue(block, 'Arrival') || 'Unable to confirm',
+      reception: findReportValue(block, 'Reception') || 'Unable to confirm',
+      payment: findReportValue(block, 'Payment') || 'Not provided for verification',
+      remarks: findReportValue(block, 'Remarks') || ''
+    };
+  }).sort((left, right) => left.number - right.number);
+
+  const dateMatch = analysis.match(/(?:DAILY OPERATIONS REPORT|SUMMARY REPORT)\s*[–-]\s*([^\n]+)/i);
+  const reportDate = dateMatch ? cleanReportValue(dateMatch[1]) : new Date().toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric'
+  });
+  const summaryLines = lines.slice(Math.max(0, lines.findIndex(line => /^SUMMARY\b/i.test(line)) + 1));
+  const serviceRevenueStart = lines.findIndex(line => /^SERVICE REVENUE\b/i.test(line));
+  const serviceRevenueEnd = lines.findIndex((line, index) => index > serviceRevenueStart && /^(PRODUCT SOLD|CLIENT SUMMARY|EXCEPTIONS|SUMMARY)\b/i.test(line));
+  const serviceRevenueLines = serviceRevenueStart >= 0
+    ? lines.slice(serviceRevenueStart + 1, serviceRevenueEnd >= 0 ? serviceRevenueEnd : lines.length)
+    : [];
+  const serviceRevenue = serviceRevenueLines.map(line => {
+    const value = cleanReportValue(line);
+    const separator = value.indexOf(':');
+    return separator >= 0
+      ? [value.slice(0, separator), value.slice(separator + 1).trim()]
+      : [value, ''];
+  }).filter(row => row[0] && !/^total service revenue/i.test(row[0]));
+
+  const totalSales = findReportValue(lines, 'Total Sales') || 'Not provided';
+  const paymentRows = ['Cash', 'Mpesa', 'PDQ', 'Credit'].map(method => [method, findReportValue(lines, method) || 'Nil']);
+  const productSold = findReportValue(lines, 'Product sold') || 'Nil';
+  const repeatClients = findReportValue(lines, 'Repeat Clients') || 'Nil';
+  const newClients = findReportValue(lines, 'New Client') || 'Nil';
+
+  return {
+    clients,
+    reportDate,
+    dateSlug: reportDate.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'report',
+    totalSales,
+    paymentRows,
+    serviceRevenue,
+    productSold,
+    repeatClients,
+    newClients,
+    summary: summaryLines.filter(line => !/^(EXCEPTIONS|ITEMS REQUIRING ATTENTION)\b/i.test(line)).join(' ')
+  };
+}
+
+function drawReportTable(doc, headers, rows, widths) {
+  const startX = doc.page.margins.left;
+  let y = doc.y;
+  const drawRow = (cells, bold = false, fill = null) => {
+    const heights = cells.map((cell, index) => doc.heightOfString(String(cell || ''), { width: widths[index] - 12 }));
+    const rowHeight = Math.max(24, Math.max(...heights) + 12);
+    if (fill) doc.save().fillColor(fill).rect(startX, y, widths.reduce((sum, width) => sum + width, 0), rowHeight).fill().restore();
+    let x = startX;
+    cells.forEach((cell, index) => {
+      doc.rect(x, y, widths[index], rowHeight).stroke('#777777');
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor('#111111')
+        .text(String(cell || ''), x + 6, y + 6, { width: widths[index] - 12, height: rowHeight - 8 });
+      x += widths[index];
+    });
+    y += rowHeight;
+  };
+  drawRow(headers, true, '#f3f3f3');
+  rows.forEach(row => drawRow(row));
+  doc.y = y + 16;
+}
+
+function createReportPDF(report) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.font('Helvetica-Bold').fontSize(18).text(`${report.reportDate.toUpperCase()} SUMMARY REPORT`, { align: 'center' });
+    doc.moveDown(0.35).fontSize(12).text(`DAILY OPERATIONS REPORT – ${report.reportDate.toUpperCase()}`, { align: 'center' });
+    doc.moveDown(1);
+    doc.font('Helvetica-Bold').fontSize(13).text('Client Service Coverage');
+    drawReportTable(doc, ['Client', 'Service', 'Done by', 'Arrival'], report.clients.map(client => [
+      `Client ${client.number}`, client.service, client.staff, client.arrival
+    ]), [80, 170, 110, 110]);
+
+    doc.font('Helvetica-Bold').fontSize(13).text('Sales Summary');
+    drawReportTable(doc, ['Item', 'Value'], [['Total Sales', report.totalSales]], [170, 300]);
+    doc.font('Helvetica-Bold').fontSize(13).text('Payment Method');
+    drawReportTable(doc, ['Method', 'Amount'], report.paymentRows, [170, 300]);
+    doc.font('Helvetica-Bold').fontSize(13).text('Service Revenue');
+    drawReportTable(doc, ['Staff / Service', 'Revenue'], report.serviceRevenue.length ? report.serviceRevenue : [['Total Service Revenue', report.totalSales]], [280, 190]);
+    doc.font('Helvetica-Bold').fontSize(13).text('Product sold');
+    doc.font('Helvetica').fontSize(10).text(report.productSold);
+    doc.moveDown(0.5).font('Helvetica-Bold').fontSize(13).text('Client Summary');
+    drawReportTable(doc, ['Client type', 'Count'], [['Repeat Clients', report.repeatClients], ['New Client', report.newClients]], [280, 190]);
+
+    report.clients.forEach(client => {
+      doc.addPage();
+      doc.font('Helvetica-Bold').fontSize(16).text(`CLIENT ${client.number}`);
+      doc.moveDown(0.6);
+      drawReportTable(doc, ['Field', 'Details'], [
+        ['SERVICE', client.service],
+        ['REVENUE', client.revenue],
+        ['DONE BY', client.staff],
+        ['ARRIVAL', client.arrival],
+        ['RECEPTION', client.reception],
+        ['PAYMENT', client.payment],
+        ['REMARKS', client.remarks || 'None']
+      ], [150, 410]);
+    });
+
+    if (report.summary) {
+      doc.addPage();
+      doc.font('Helvetica-Bold').fontSize(14).text('SUMMARY');
+      doc.moveDown(0.5).font('Helvetica').fontSize(11).text(report.summary, { lineGap: 4 });
+    }
+    doc.end();
+  });
 }
 
 // Helper function to format report as HTML

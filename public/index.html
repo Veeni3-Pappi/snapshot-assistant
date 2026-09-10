@@ -726,8 +726,8 @@
     <button class="btn-analyze hidden" id="emailBtn" onclick="generateAndEmailReport()" style="background: #3b82f6;">
       <div style="text-align: center; width: 100%;">
         <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px;">
-          <i data-lucide="mail" class="icon-md"></i>
-          <span>Send Report via Email</span>
+          <i data-lucide="file-down" class="icon-md"></i>
+          <span>Download PDF &amp; Send Report</span>
         </div>
       </div>
     </button>
@@ -1050,7 +1050,7 @@
         return;
       }
 
-      showLoading('Generating and sending report via email...');
+      showLoading('Creating PDF report and sending it via email...');
 
       try {
         const response = await fetch('/api/generate-report', {
@@ -1059,18 +1059,25 @@
           body: JSON.stringify({ analysis: analysisData })
         });
 
-        const data = await response.json();
-        
-        if (data.success) {
-          showMessage(data.message, 'success');
-          displayAnalysis(analysisData);
-        } else {
-          displayAnalysis(analysisData);
-          showMessage('Email failed: ' + data.error, 'error');
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Report generation failed');
         }
+
+        const pdfBlob = await response.blob();
+        const downloadUrl = URL.createObjectURL(pdfBlob);
+        const downloadLink = document.createElement('a');
+        downloadLink.href = downloadUrl;
+        downloadLink.download = 'salon-daily-operations-report.pdf';
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+        URL.revokeObjectURL(downloadUrl);
+        displayAnalysis(analysisData);
+        showMessage(response.headers.get('X-Report-Delivery') || 'PDF report generated successfully', 'success');
       } catch (error) {
         displayAnalysis(analysisData);
-        showMessage('Failed to send email: ' + error.message, 'error');
+        showMessage('Failed to generate PDF report: ' + error.message, 'error');
       }
     }
   </script>

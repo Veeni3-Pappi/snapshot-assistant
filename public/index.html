@@ -726,8 +726,8 @@
     <button class="btn-analyze hidden" id="emailBtn" onclick="generateAndEmailReport()" style="background: #3b82f6;">
       <div style="text-align: center; width: 100%;">
         <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px;">
-          <i data-lucide="file-down" class="icon-md"></i>
-          <span>Download PDF &amp; Send Report</span>
+          <i data-lucide="send" class="icon-md"></i>
+          <span>Send PDF Report by Email</span>
         </div>
       </div>
     </button>
@@ -1059,25 +1059,13 @@
           body: JSON.stringify({ analysis: analysisData })
         });
 
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Report generation failed');
-        }
-
-        const pdfBlob = await response.blob();
-        const downloadUrl = URL.createObjectURL(pdfBlob);
-        const downloadLink = document.createElement('a');
-        downloadLink.href = downloadUrl;
-        downloadLink.download = 'salon-daily-operations-report.pdf';
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-        URL.revokeObjectURL(downloadUrl);
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || data.message || 'Report delivery failed');
         displayAnalysis(analysisData);
-        showMessage(response.headers.get('X-Report-Delivery') || 'PDF report generated successfully', 'success');
+        showMessage(`${data.message}. PDF and ${data.attachmentCount - 1} snapshot image(s) attached.`, 'success');
       } catch (error) {
         displayAnalysis(analysisData);
-        showMessage('Failed to generate PDF report: ' + error.message, 'error');
+        showMessage('Failed to email report: ' + error.message, 'error');
       }
     }
   </script>

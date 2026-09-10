@@ -265,7 +265,7 @@ app.post('/api/generate-report', async (req, res) => {
       });
     }
 
-    const report = parseAnalysisForReport(analysis);
+    const report = parseAnalysisForReport(analysis, sessionData.cctvSnapshots);
     const pdfBuffer = await createReportPDF(report);
     const notificationMethod = process.env.NOTIFICATION_METHOD || 'email';
     const results = {
@@ -274,7 +274,7 @@ app.post('/api/generate-report', async (req, res) => {
     };
 
     // Send Email
-    if (notificationMethod === 'email' || notificationMethod === 'both') {
+    if (notificationMethod !== 'sms') {
       try {
         const fromEmail = process.env.EMAIL_USER || 'onboarding@resend.dev';
         const recipientEmail = process.env.REPORT_RECIPIENT_EMAIL;
@@ -291,7 +291,10 @@ app.post('/api/generate-report', async (req, res) => {
           attachments: [{
             filename: `salon-daily-operations-${report.dateSlug}.pdf`,
             content: pdfBuffer.toString('base64')
-          }]
+          }, ...sessionData.cctvSnapshots.map((snapshot, index) => ({
+            filename: snapshot.originalname || `snapshot-${index + 1}.jpg`,
+            content: snapshot.data.toString('base64')
+          }))]
         });
 
         const options = {
@@ -411,11 +414,12 @@ app.post('/api/generate-report', async (req, res) => {
       if (results.sms) message += `SMS: ${results.sms.error}`;
     }
 
-    res.status(200)
-      .set('Content-Type', 'application/pdf')
-      .set('Content-Disposition', `attachment; filename="salon-daily-operations-${report.dateSlug}.pdf"`)
-      .set('X-Report-Delivery', overallSuccess ? message : 'PDF generated; delivery notification failed')
-      .send(pdfBuffer);
+    res.json({
+      success: overallSuccess,
+      message: overallSuccess ? message : `PDF generated but could not be emailed. ${message}`,
+      details: results,
+      attachmentCount: sessionData.cctvSnapshots.length + 1
+    });
   } catch (error) {
     console.error('Error in report generation:', error);
     res.status(500).json({
@@ -557,6 +561,7 @@ OUTPUT FORMAT:
 For each client, provide:
 
 CLIENT [number]
+Evidence snapshots: [comma-separated original snapshot numbers, using the upload order 1 through ${cctvCount}]
 Snapshots: [describe each snapshot with camera/location and approximate time if visible, in chronological/stage order]
 - Snapshot 1: [Entry at front door, 9:15 AM]
 - Snapshot 2: [Reception desk, 9:17 AM]
@@ -620,7 +625,7 @@ function findReportValue(lines, label) {
   return cleanReportValue(line.replace(new RegExp(`^[-•*]?\\s*${label}\\s*[-:]\\s*`, 'i'), ''));
 }
 
-function parseAnalysisForReport(analysis) {
+function parseAnalysisForReport(analysis, snapshots = []) {
   const lines = analysis.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const clientIndexes = [];
   lines.forEach((line, index) => {
@@ -639,9 +644,18 @@ function parseAnalysisForReport(analysis) {
       arrival: findReportValue(block, 'Arrival') || 'Unable to confirm',
       reception: findReportValue(block, 'Reception') || 'Unable to confirm',
       payment: findReportValue(block, 'Payment') || 'Not provided for verification',
-      remarks: findReportValue(block, 'Remarks') || ''
+      remarks: findReportValue(block, 'Remarks') || '',
+      snapshotNumbers: parseSnapshotNumbers(block)
     };
   }).sort((left, right) => left.number - right.number);
+
+  const fallbackGroups = splitSnapshotIndexes(snapshots.length, clients.length);
+  clients.forEach((client, index) => {
+    if (client.snapshotNumbers.length === 0) client.snapshotNumbers = fallbackGroups[index] || [];
+    client.snapshots = client.snapshotNumbers
+      .map(number => snapshots[number - 1])
+      .filter(Boolean);
+  });
 
   const dateMatch = analysis.match(/(?:DAILY OPERATIONS REPORT|SUMMARY REPORT)\s*[–-]\s*([^\n]+)/i);
   const reportDate = dateMatch ? cleanReportValue(dateMatch[1]) : new Date().toLocaleDateString('en-GB', {
@@ -681,6 +695,23 @@ function parseAnalysisForReport(analysis) {
   };
 }
 
+function parseSnapshotNumbers(lines) {
+  const evidenceLine = lines.find(line => /^(Evidence|Snapshot files?|Snapshots used)\s*:/i.test(line));
+  if (!evidenceLine) return [];
+  return [...evidenceLine.matchAll(/\d+/g)].map(match => Number(match[0])).filter(number => number > 0);
+}
+
+function splitSnapshotIndexes(snapshotCount, clientCount) {
+  if (!snapshotCount || !clientCount) return [];
+  const groups = [];
+  for (let index = 0; index < clientCount; index += 1) {
+    const start = Math.floor(index * snapshotCount / clientCount);
+    const end = Math.floor((index + 1) * snapshotCount / clientCount);
+    groups.push(Array.from({ length: Math.max(1, end - start) }, (_, offset) => start + offset + 1));
+  }
+  return groups;
+}
+
 function drawReportTable(doc, headers, rows, widths) {
   const startX = doc.page.margins.left;
   let y = doc.y;
@@ -697,7 +728,7 @@ function drawReportTable(doc, headers, rows, widths) {
     });
     y += rowHeight;
   };
-  drawRow(headers, true, '#f3f3f3');
+  if (headers) drawRow(headers, true, '#f3f3f3');
   rows.forEach(row => drawRow(row));
   doc.y = y + 16;
 }
@@ -731,24 +762,26 @@ function createReportPDF(report) {
 
     report.clients.forEach(client => {
       doc.addPage();
-      doc.font('Helvetica-Bold').fontSize(16).text(`CLIENT ${client.number}`);
-      doc.moveDown(0.6);
-      drawReportTable(doc, ['Field', 'Details'], [
+      drawReportTable(doc, null, [
+        [`CLIENT ${client.number}`, ''],
         ['SERVICE', client.service],
         ['REVENUE', client.revenue],
         ['DONE BY', client.staff],
-        ['ARRIVAL', client.arrival],
-        ['RECEPTION', client.reception],
-        ['PAYMENT', client.payment],
-        ['REMARKS', client.remarks || 'None']
+        ['ARRIVAL', client.arrival]
       ], [150, 410]);
+      const images = client.snapshots.length ? client.snapshots : [];
+      const imageWidth = 238;
+      const imageHeight = 170;
+      const imageGap = 12;
+      images.forEach((snapshot, index) => {
+        const column = index % 2;
+        if (column === 0 && doc.y + imageHeight + 24 > doc.page.height - doc.page.margins.bottom) doc.addPage();
+        const imageX = doc.page.margins.left + column * (imageWidth + imageGap);
+        const imageY = doc.y;
+        doc.image(snapshot.data, imageX, imageY, { fit: [imageWidth, imageHeight], align: 'left', valign: 'top' });
+        if (column === 1 || index === images.length - 1) doc.y = imageY + imageHeight + 12;
+      });
     });
-
-    if (report.summary) {
-      doc.addPage();
-      doc.font('Helvetica-Bold').fontSize(14).text('SUMMARY');
-      doc.moveDown(0.5).font('Helvetica').fontSize(11).text(report.summary, { lineGap: 4 });
-    }
     doc.end();
   });
 }

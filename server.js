@@ -6,6 +6,27 @@ const fs = require('fs');
 const https = require('https');
 const PDFDocument = require('pdfkit');
 const smsGateway = require('./smsGateway');
+const sharp = require('sharp');
+
+// Helper to optimize and compress image buffers (reduces MBs while keeping high visual clarity)
+async function optimizeImage(buffer, maxDimension = 1400, quality = 82) {
+  if (!buffer) return null;
+  try {
+    return await sharp(buffer)
+      .rotate() // auto-orient based on EXIF
+      .resize({
+        width: maxDimension,
+        height: maxDimension,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({ quality, progressive: true, mozjpeg: true })
+      .toBuffer();
+  } catch (err) {
+    console.warn('[Image] Optimization failed, using original buffer:', err.message);
+    return buffer;
+  }
+}
 
 // Check which AI provider to use
 const AI_PROVIDER = process.env.AI_PROVIDER || 'claude';
@@ -64,20 +85,24 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 // Routes
 
 // Upload CCTV snapshots
-app.post('/api/upload-cctv', upload.array('snapshots', 50), (req, res) => {
+app.post('/api/upload-cctv', upload.array('snapshots', 50), async (req, res) => {
   try {
-    const files = req.files.map(file => ({
-      data: file.buffer,
-      mimetype: file.mimetype,
-      originalname: file.originalname,
-      timestamp: new Date().toISOString()
+    const rawFiles = req.files || [];
+    const files = await Promise.all(rawFiles.map(async file => {
+      const optimized = await optimizeImage(file.buffer, 1400, 82);
+      return {
+        data: optimized,
+        mimetype: 'image/jpeg',
+        originalname: file.originalname,
+        timestamp: new Date().toISOString()
+      };
     }));
     
     sessionData.cctvSnapshots.push(...files);
     
     res.json({ 
       success: true, 
-      message: `${files.length} snapshot(s) uploaded successfully`,
+      message: `${files.length} snapshot(s) uploaded and optimized successfully`,
       totalSnapshots: sessionData.cctvSnapshots.length
     });
   } catch (error) {
@@ -87,17 +112,18 @@ app.post('/api/upload-cctv', upload.array('snapshots', 50), (req, res) => {
 });
 
 // Upload Daily Book
-app.post('/api/upload-daily-book', upload.single('dailyBook'), (req, res) => {
+app.post('/api/upload-daily-book', upload.single('dailyBook'), async (req, res) => {
   try {
+    const optimized = await optimizeImage(req.file.buffer, 1600, 85);
     sessionData.dailyBook = {
-      data: req.file.buffer,
-      mimetype: req.file.mimetype,
+      data: optimized,
+      mimetype: 'image/jpeg',
       originalname: req.file.originalname
     };
     
     res.json({ 
       success: true, 
-      message: 'Daily Book uploaded successfully'
+      message: 'Daily Book uploaded and optimized successfully'
     });
   } catch (error) {
     console.error('Error uploading Daily Book:', error);
@@ -106,20 +132,21 @@ app.post('/api/upload-daily-book', upload.single('dailyBook'), (req, res) => {
 });
 
 // Upload Payment/Sales Records
-app.post('/api/upload-payment-records', upload.single('paymentRecords'), (req, res) => {
+app.post('/api/upload-payment-records', upload.single('paymentRecords'), async (req, res) => {
   try {
+    const optimized = await optimizeImage(req.file.buffer, 1600, 85);
     sessionData.paymentRecords = {
-      data: req.file.buffer,
-      mimetype: req.file.mimetype,
+      data: optimized,
+      mimetype: 'image/jpeg',
       originalname: req.file.originalname
     };
     
     res.json({ 
       success: true, 
-      message: 'Payment/Sales Records uploaded successfully'
+      message: 'Payment records uploaded and optimized successfully'
     });
   } catch (error) {
-    console.error('Error uploading Payment Records:', error);
+    console.error('Error uploading Payment records:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -284,19 +311,40 @@ app.post('/api/generate-report', async (req, res) => {
           throw new Error('Recipient email not configured in .env file');
         }
 
+        // Prepare attachments safely: PDF is essential; snapshots are attached if within safe size limit (15MB)
+        const attachments = [{
+          filename: `salon-daily-operations-${report.dateSlug}.pdf`,
+          content: pdfBuffer.toString('base64')
+        }];
+
+        let currentPayloadBytes = pdfBuffer.length;
+        const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // 15MB safe threshold for Resend
+
+        for (let index = 0; index < sessionData.cctvSnapshots.length; index++) {
+          const snapshot = sessionData.cctvSnapshots[index];
+          if (snapshot && snapshot.data) {
+            const snapBytes = snapshot.data.length;
+            if (currentPayloadBytes + snapBytes <= MAX_ATTACHMENT_BYTES) {
+              attachments.push({
+                filename: snapshot.originalname || `snapshot-${index + 1}.jpg`,
+                content: snapshot.data.toString('base64')
+              });
+              currentPayloadBytes += snapBytes;
+            } else {
+              console.log(`[Email] Skipping raw snapshot ${index + 1} (${(snapBytes / 1024 / 1024).toFixed(1)}MB) to keep payload under 15MB. It is already included inside the PDF report.`);
+            }
+          }
+        }
+
         const emailData = JSON.stringify({
           from: fromEmail,
           to: [recipientEmail],
           subject: `Salon Daily Operations Report - ${new Date().toLocaleDateString()}`,
-          html: '<p>Your Salon Daily Operations Report is attached as a PDF.</p>',
-          attachments: [{
-            filename: `salon-daily-operations-${report.dateSlug}.pdf`,
-            content: pdfBuffer.toString('base64')
-          }, ...sessionData.cctvSnapshots.map((snapshot, index) => ({
-            filename: snapshot.originalname || `snapshot-${index + 1}.jpg`,
-            content: snapshot.data.toString('base64')
-          }))]
+          html: `<p>Your Salon Daily Operations Report is attached as a PDF.</p><p><small>Generated at ${new Date().toLocaleTimeString()} on ${report.reportDate}</small></p>`,
+          attachments
         });
+
+        console.log(`[Email] Sending report email via Resend to ${recipientEmail} (${(Buffer.byteLength(emailData) / (1024 * 1024)).toFixed(2)} MB, ${attachments.length} attachment(s))...`);
 
         const options = {
           hostname: 'api.resend.com',
@@ -307,7 +355,7 @@ app.post('/api/generate-report', async (req, res) => {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(emailData)
           },
-          timeout: 30000
+          timeout: 60000
         };
 
         const emailResult = await new Promise((resolve, reject) => {
@@ -330,7 +378,7 @@ app.post('/api/generate-report', async (req, res) => {
                   reject(new Error(`Failed to parse response: ${data}`));
                 }
               } else {
-                reject(new Error(`HTTP ${response.statusCode}: ${data}`));
+                reject(new Error(`Resend API Error HTTP ${response.statusCode}: ${data}`));
               }
             });
           });
@@ -341,9 +389,9 @@ app.post('/api/generate-report', async (req, res) => {
           });
 
           request.on('timeout', () => {
-            console.error('Resend API Request Timeout');
+            console.error('Resend API Request Timeout after 60 seconds');
             request.destroy();
-            reject(new Error('Request timeout after 30 seconds'));
+            reject(new Error('Request timeout after 60 seconds. Payload may be too large or connection too slow.'));
           });
 
           request.write(emailData);
@@ -353,7 +401,8 @@ app.post('/api/generate-report', async (req, res) => {
         results.email = {
           success: true,
           id: emailResult.id,
-          recipient: recipientEmail
+          recipient: recipientEmail,
+          attachmentCount: attachments.length
         };
       } catch (emailError) {
         console.error('Email error:', emailError);
@@ -704,17 +753,28 @@ function splitSnapshotIndexes(snapshotCount, clientCount) {
   return groups;
 }
 
-function drawReportTable(doc, headers, rows, widths) {
+function drawReportTable(doc, headers, rows, widths, options = {}) {
   const startX = doc.page.margins.left;
   let y = doc.y;
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+  const boldFirstCol = options.boldFirstCol || false;
+
   const drawRow = (cells, bold = false, fill = null) => {
     const heights = cells.map((cell, index) => doc.heightOfString(String(cell || ''), { width: widths[index] - 12 }));
     const rowHeight = Math.max(24, Math.max(...heights) + 12);
-    if (fill) doc.save().fillColor(fill).rect(startX, y, widths.reduce((sum, width) => sum + width, 0), rowHeight).fill().restore();
+
+    // Check if row fits on current page, add page if needed
+    if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+
+    if (fill) doc.save().fillColor(fill).rect(startX, y, totalWidth, rowHeight).fill().restore();
     let x = startX;
     cells.forEach((cell, index) => {
       doc.rect(x, y, widths[index], rowHeight).stroke('#777777');
-      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor('#111111')
+      const isBold = bold || (boldFirstCol && index === 0);
+      doc.font(isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor('#111111')
         .text(String(cell || ''), x + 6, y + 6, { width: widths[index] - 12, height: rowHeight - 8 });
       x += widths[index];
     });
@@ -726,55 +786,169 @@ function drawReportTable(doc, headers, rows, widths) {
 }
 
 function createReportPDF(report) {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 48 });
-    const chunks = [];
-    doc.on('data', chunk => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 48 });
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
 
-    doc.font('Helvetica-Bold').fontSize(18).text(`${report.reportDate.toUpperCase()} SUMMARY REPORT`, { align: 'center' });
-    doc.moveDown(0.35).fontSize(12).text(`DAILY OPERATIONS REPORT – ${report.reportDate.toUpperCase()}`, { align: 'center' });
-    doc.moveDown(1);
-    doc.font('Helvetica-Bold').fontSize(13).text('Client Service Coverage');
-    drawReportTable(doc, ['Client', 'Service', 'Done by', 'Arrival'], report.clients.map(client => [
-      `Client ${client.number}`, client.service, client.staff, client.arrival
-    ]), [80, 170, 110, 110]);
+      // Page content width: 595.28 - 48*2 = ~499 pt
+      const pageContentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-    doc.font('Helvetica-Bold').fontSize(13).text('Sales Summary');
-    drawReportTable(doc, ['Item', 'Value'], [['Total Sales', report.totalSales]], [170, 300]);
-    doc.font('Helvetica-Bold').fontSize(13).text('Payment Method');
-    drawReportTable(doc, ['Method', 'Amount'], report.paymentRows, [170, 300]);
-    doc.font('Helvetica-Bold').fontSize(13).text('Service Revenue');
-    drawReportTable(doc, ['Staff / Service', 'Revenue'], report.serviceRevenue.length ? report.serviceRevenue : [['Total Service Revenue', report.totalSales]], [280, 190]);
-    doc.font('Helvetica-Bold').fontSize(13).text('Product sold');
-    doc.font('Helvetica').fontSize(10).text(report.productSold);
-    doc.moveDown(0.5).font('Helvetica-Bold').fontSize(13).text('Client Summary');
-    drawReportTable(doc, ['Client type', 'Count'], [['Repeat Clients', report.repeatClients], ['New Client', report.newClients]], [280, 190]);
+      // ── Page 1: Summary ──
+      doc.font('Helvetica-Bold').fontSize(18).text(`${report.reportDate.toUpperCase()} SUMMARY REPORT`, { align: 'center' });
+      doc.moveDown(0.35).fontSize(12).text(`DAILY OPERATIONS REPORT – ${report.reportDate.toUpperCase()}`, { align: 'center' });
+      doc.moveDown(1);
 
-    report.clients.forEach(client => {
-      doc.addPage();
-      drawReportTable(doc, null, [
-        [`CLIENT ${client.number}`, ''],
-        ['SERVICE', client.service],
-        ['REVENUE', client.revenue],
-        ['DONE BY', client.staff],
-        ['ARRIVAL', client.arrival]
-      ], [150, 410]);
-      const images = client.snapshots.length ? client.snapshots : [];
-      const imageWidth = 238;
-      const imageHeight = 170;
-      const imageGap = 12;
-      images.forEach((snapshot, index) => {
-        const column = index % 2;
-        if (column === 0 && doc.y + imageHeight + 24 > doc.page.height - doc.page.margins.bottom) doc.addPage();
-        const imageX = doc.page.margins.left + column * (imageWidth + imageGap);
-        const imageY = doc.y;
-        doc.image(snapshot.data, imageX, imageY, { fit: [imageWidth, imageHeight], align: 'left', valign: 'top' });
-        if (column === 1 || index === images.length - 1) doc.y = imageY + imageHeight + 12;
-      });
-    });
-    doc.end();
+      // Client Service Coverage table
+      doc.font('Helvetica-Bold').fontSize(13).text('Client Service Coverage');
+      doc.moveDown(0.3);
+      const coverageWidths = [
+        Math.round(pageContentWidth * 0.16),   // Client
+        Math.round(pageContentWidth * 0.34),   // Service
+        Math.round(pageContentWidth * 0.30),   // Done by
+        Math.round(pageContentWidth * 0.20)    // Arrival
+      ];
+      drawReportTable(doc, ['Client', 'Service', 'Done by', 'Arrival'], report.clients.map(client => [
+        `Client ${client.number}`, client.service, client.staff, client.arrival
+      ]), coverageWidths);
+
+      // Sales Summary
+      doc.font('Helvetica-Bold').fontSize(13).text('Sales Summary');
+      doc.moveDown(0.3);
+      const twoColWidths = [Math.round(pageContentWidth * 0.40), Math.round(pageContentWidth * 0.60)];
+      drawReportTable(doc, ['Item', 'Value'], [['Total Sales', report.totalSales]], twoColWidths);
+
+      // Payment Method
+      doc.font('Helvetica-Bold').fontSize(13).text('Payment Method');
+      doc.moveDown(0.3);
+      drawReportTable(doc, ['Method', 'Amount'], report.paymentRows, twoColWidths);
+
+      // Service Revenue
+      doc.font('Helvetica-Bold').fontSize(13).text('Service Revenue');
+      doc.moveDown(0.3);
+      const revenueWidths = [Math.round(pageContentWidth * 0.55), Math.round(pageContentWidth * 0.45)];
+      drawReportTable(doc, ['Staff / Service', 'Revenue'], report.serviceRevenue.length ? report.serviceRevenue : [['Total Service Revenue', report.totalSales]], revenueWidths);
+
+      // Product sold
+      doc.font('Helvetica-Bold').fontSize(13).text('Product sold');
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(10).text(report.productSold);
+      doc.moveDown(0.5);
+
+      // Client Summary
+      doc.font('Helvetica-Bold').fontSize(13).text('Client Summary');
+      doc.moveDown(0.3);
+      drawReportTable(doc, ['Client type', 'Count'], [['Repeat Clients', report.repeatClients], ['New Client', report.newClients]], revenueWidths);
+
+      // ── Per-client detail pages ──
+      const detailWidths = [Math.round(pageContentWidth * 0.25), Math.round(pageContentWidth * 0.75)];
+
+      for (const client of report.clients) {
+        doc.addPage();
+
+        // Client header
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111111')
+          .text(`CLIENT ${client.number}`, { align: 'left' });
+        doc.moveDown(0.5);
+
+        // Detail table with Field / Details header
+        const detailRows = [
+          ['SERVICE', client.service],
+          ['REVENUE', client.revenue],
+          ['DONE BY', client.staff],
+          ['ARRIVAL', client.arrival],
+          ['RECEPTION', client.reception || 'Unable to confirm'],
+          ['PAYMENT', client.payment || 'Not provided for verification.'],
+          ['REMARKS', client.remarks || '']
+        ].filter(row => row[1]); // Remove rows with empty values
+
+        drawReportTable(doc, ['Field', 'Details'], detailRows, detailWidths, { boldFirstCol: true });
+
+        // Snapshot images: bigger display size, physically smaller MBs via sharp compression
+        const rawSnapshots = client.snapshots && client.snapshots.length ? client.snapshots : [];
+        if (rawSnapshots.length > 0) {
+          doc.moveDown(0.5);
+
+          // Compress and optimize each snapshot buffer before embedding
+          const optimizedBuffers = await Promise.all(
+            rawSnapshots.map(async (snap) => {
+              if (!snap || !snap.data) return null;
+              return await optimizeImage(snap.data, 1200, 80);
+            })
+          );
+          const validImages = optimizedBuffers.filter(Boolean);
+
+          if (validImages.length === 1) {
+            // Single snapshot: BIG full-width display
+            const availableHeight = doc.page.height - doc.page.margins.bottom - doc.y;
+            if (availableHeight < 160) {
+              doc.addPage();
+            }
+            const singleMaxHeight = Math.min(340, Math.max(220, doc.page.height - doc.page.margins.bottom - doc.y - 12));
+            const startY = doc.y;
+            try {
+              doc.image(validImages[0], doc.page.margins.left, startY, {
+                fit: [pageContentWidth, singleMaxHeight],
+                align: 'center',
+                valign: 'center'
+              });
+              doc.y = startY + singleMaxHeight + 14;
+            } catch (imgErr) {
+              console.error(`Failed to embed snapshot for Client ${client.number}:`, imgErr.message);
+            }
+          } else if (validImages.length > 1) {
+            // Multiple snapshots: large 2-column grid (each image up to ~242 pt wide x 230 pt high)
+            const gap = 14;
+            const colWidth = Math.floor((pageContentWidth - gap) / 2);
+            const colHeight = 230;
+
+            for (let index = 0; index < validImages.length; index++) {
+              const column = index % 2;
+              if (column === 0 && doc.y + colHeight + 20 > doc.page.height - doc.page.margins.bottom) {
+                doc.addPage();
+              }
+
+              const imageX = doc.page.margins.left + column * (colWidth + gap);
+              const imageY = doc.y;
+
+              try {
+                doc.image(validImages[index], imageX, imageY, {
+                  fit: [colWidth, colHeight],
+                  align: 'center',
+                  valign: 'center'
+                });
+              } catch (imgErr) {
+                console.error(`Failed to embed snapshot ${index + 1} for Client ${client.number}:`, imgErr.message);
+              }
+
+              if (column === 1 || index === validImages.length - 1) {
+                doc.y = imageY + colHeight + 14;
+              }
+            }
+          }
+        }
+      }
+
+      // ── Final page: Summary narrative ──
+      if (report.summary) {
+        doc.addPage();
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111111').text('SUMMARY', { align: 'left' });
+        doc.moveDown(0.5);
+        doc.font('Helvetica').fontSize(10).fillColor('#111111')
+          .text(report.summary, {
+            align: 'left',
+            lineGap: 3,
+            width: pageContentWidth
+          });
+      }
+
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 

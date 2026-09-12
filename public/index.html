@@ -569,6 +569,18 @@
       </div>
       <h1>Salon Snapshot</h1>
       <p>Daily Operations Report Assistant</p>
+
+      <!-- SMS Gateway Status Widget -->
+      <div id="gatewayStatusWidget" style="margin-top: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 13px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="gatewayStatusDot" style="width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; display: inline-block;"></span>
+          <span id="gatewayStatusText" style="color: #cbd5e1;">SMS Gateway: Checking...</span>
+        </div>
+        <button type="button" onclick="testSmsGateway()" style="background: rgba(59,130,246,0.25); border: 1px solid rgba(59,130,246,0.5); color: #93c5fd; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          <i data-lucide="smartphone" class="icon-sm"></i>
+          <span>Test SMS</span>
+        </button>
+      </div>
     </div>
 
     <!-- Progress Section -->
@@ -1063,11 +1075,79 @@
         if (!response.ok || !data.success) throw new Error(data.error || data.message || 'Report delivery failed');
         displayAnalysis(analysisData);
         showMessage(`${data.message}. PDF and ${data.attachmentCount - 1} snapshot image(s) attached.`, 'success');
+        checkSmsGatewayStatus();
       } catch (error) {
         displayAnalysis(analysisData);
-        showMessage('Failed to email report: ' + error.message, 'error');
+        showMessage('Failed to send report: ' + error.message, 'error');
       }
     }
+
+    // SMS Gateway Client integration
+    async function checkSmsGatewayStatus() {
+      try {
+        const res = await fetch('/api/sms-gateway/status');
+        const json = await res.json();
+        if (json.success && json.data) {
+          const { provider, queue, activeDevices, configuredGatewayUrl } = json.data;
+          const dot = document.getElementById('gatewayStatusDot');
+          const text = document.getElementById('gatewayStatusText');
+          if (!dot || !text) return;
+
+          if (activeDevices && activeDevices.length > 0) {
+            const dev = activeDevices[0];
+            dot.style.background = '#4ade80';
+            dot.style.boxShadow = '0 0 8px #4ade80';
+            text.innerHTML = `SMS Gateway: <strong style="color:#4ade80">Phone Online</strong> (${dev.model || 'Android'}) • Queue: ${queue.pending}`;
+          } else if (configuredGatewayUrl) {
+            dot.style.background = '#38bdf8';
+            text.innerHTML = `SMS Gateway: <strong style="color:#38bdf8">Direct Push</strong> • Queue: ${queue.pending}`;
+          } else if (provider === 'africastalking') {
+            dot.style.background = '#c084fc';
+            text.innerHTML = `SMS: <strong style="color:#c084fc">Africa's Talking</strong>`;
+          } else {
+            dot.style.background = '#fbbf24';
+            text.innerHTML = `SMS: <strong style="color:#fbbf24">MSMS Gateway</strong> (Queue: ${queue.pending} pending)`;
+          }
+        }
+      } catch (e) {
+        // silent
+      }
+    }
+
+    async function testSmsGateway() {
+      const phone = prompt('Enter recipient phone number for test SMS:', '+254713405976');
+      if (!phone) return;
+      showLoading('Sending test SMS via MSMS Gateway...');
+      try {
+        const res = await fetch('/api/sms-gateway/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: phone,
+            message: 'Hello from Salon Snapshot! MSMS SMS Gateway connection test successful at ' + new Date().toLocaleTimeString()
+          })
+        });
+        const data = await res.json();
+        if (analysisData) displayAnalysis(analysisData);
+        else {
+          const resultsDiv = document.getElementById('analysisResults');
+          resultsDiv.classList.add('hidden');
+        }
+        if (data.success) {
+          showMessage(`Test SMS dispatched! Provider: ${data.result?.provider || 'msms'}. ID: ${data.result?.messageId || 'OK'}`, 'success');
+          checkSmsGatewayStatus();
+        } else {
+          showMessage(`Test SMS failed: ${data.error}`, 'error');
+        }
+      } catch (err) {
+        if (analysisData) displayAnalysis(analysisData);
+        showMessage(`Test SMS error: ${err.message}`, 'error');
+      }
+    }
+
+    // Check status on load and periodically
+    checkSmsGatewayStatus();
+    setInterval(checkSmsGatewayStatus, 15000);
   </script>
 </body>
 </html>

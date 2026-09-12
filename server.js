@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const PDFDocument = require('pdfkit');
+const smsGateway = require('./smsGateway');
 
 // Check which AI provider to use
 const AI_PROVIDER = process.env.AI_PROVIDER || 'claude';
@@ -372,17 +373,16 @@ app.post('/api/generate-report', async (req, res) => {
           throw new Error('SMS recipient not configured in .env file');
         }
 
-        if (!smsClient) {
-          throw new Error('SMS service not initialized. Install: npm install africastalking');
-        }
-
         const smsSummary = generateSMSSummary(analysis);
         const smsResult = await sendSMS(smsSummary, smsRecipient);
         
         results.sms = {
           success: true,
+          provider: smsResult.provider || process.env.SMS_PROVIDER || 'msms',
           recipient: smsRecipient,
-          messageId: smsResult.SMSMessageData?.Recipients?.[0]?.messageId
+          messageId: smsResult.messageId || smsResult.SMSMessageData?.Recipients?.[0]?.messageId,
+          status: smsResult.status || 'sent',
+          details: smsResult.details || null
         };
       } catch (smsError) {
         console.error('SMS error:', smsError);
@@ -484,21 +484,13 @@ function generateSMSSummary(analysis) {
   }
 }
 
-// Helper function to send SMS
+// Helper function to send SMS (supports Android MSMS / smsgt gateway + Africa's Talking)
 async function sendSMS(message, recipient) {
-  if (!smsClient) {
-    throw new Error('SMS service not configured');
-  }
-  
-  const options = {
-    to: [recipient],
-    message: message,
-    from: process.env.AFRICASTALKING_SENDER_ID || null
-  };
-  
   try {
-    const result = await smsClient.send(options);
-    console.log('SMS sent successfully:', result);
+    const result = await smsGateway.sendSMS(message, recipient, {
+      africasTalkingClient: smsClient
+    });
+    console.log('SMS dispatch result:', result);
     return result;
   } catch (error) {
     console.error('SMS error:', error);
@@ -991,6 +983,71 @@ function formatReportAsHTML(analysis) {
   return html;
 }
 
+// ==========================================
+// SMS GATEWAY API (Android MSMS / smsgt)
+// ==========================================
+
+// Gateway diagnostics & status
+app.get('/api/sms-gateway/status', (req, res) => {
+  res.json({ success: true, data: smsGateway.getStatus() });
+});
+
+// Android phone polls for pending messages
+app.get('/api/sms-gateway/pending', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const messages = smsGateway.getPendingMessages(limit);
+  res.json({ success: true, count: messages.length, messages });
+});
+
+// Android phone updates status of a message (sent / delivered / failed)
+app.post('/api/sms-gateway/status', (req, res) => {
+  const { messageId, status, error, parts, simSlot } = req.body;
+  if (!messageId || !status) {
+    return res.status(400).json({ success: false, error: 'messageId and status are required' });
+  }
+  const updated = smsGateway.updateMessageStatus(messageId, status, { error, parts, simSlot });
+  res.json({ success: !!updated, data: updated });
+});
+
+// Android phone registers or sends heartbeat
+app.post('/api/sms-gateway/register', (req, res) => {
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+  const cleanIp = clientIp.replace(/^.*:/, ''); // strip ipv6 prefix if present
+  const deviceInfo = {
+    ...req.body,
+    ip: req.body.ip || cleanIp
+  };
+  const device = smsGateway.registerDevice(deviceInfo);
+  res.json({ success: true, device });
+});
+
+// Active devices
+app.get('/api/sms-gateway/devices', (req, res) => {
+  res.json({ success: true, devices: smsGateway.getActiveDevices() });
+});
+
+// Send an arbitrary SMS via the gateway
+app.post('/api/sms-gateway/send', async (req, res) => {
+  try {
+    const { to, message, simSlot } = req.body;
+    if (!to || !message) {
+      return res.status(400).json({ success: false, error: 'to and message are required' });
+    }
+    const result = await smsGateway.sendSMS(message, to, {
+      simSlot,
+      africasTalkingClient: smsClient
+    });
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Clear queue
+app.post('/api/sms-gateway/clear', (req, res) => {
+  res.json({ success: true, result: smsGateway.clearQueue() });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`\n╔════════════════════════════════════════════════════════╗`);
@@ -1000,7 +1057,9 @@ app.listen(PORT, () => {
   console.log(`📱 Mobile: Run 'npm run ip' to get your IP address\n`);
   console.log(`🤖 AI Provider: ${AI_PROVIDER.toUpperCase()}`);
   console.log(`📧 Email Service: Resend`);
-  console.log(`📨 Reports to: ${process.env.REPORT_RECIPIENT_EMAIL || 'Not configured'}\n`);
+  console.log(`📨 Reports to: ${process.env.REPORT_RECIPIENT_EMAIL || 'Not configured'}`);
+  console.log(`📱 SMS Provider: ${process.env.SMS_PROVIDER || 'msms (Android Gateway)'}`);
+  console.log(`📲 SMS Recipient: ${process.env.SMS_RECIPIENT || 'Not configured'}\n`);
   
   if (AI_PROVIDER === 'gemini' && !process.env.GOOGLE_API_KEY) {
     console.log(`⚠️  WARNING: GOOGLE_API_KEY not set in .env file`);
